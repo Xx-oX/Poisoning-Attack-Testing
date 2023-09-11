@@ -13,14 +13,15 @@ args = {
     'batch_size': 32,
     'test_batch_size': 1000,
     'rounds': 5,
-    'epochs_per_round':1,
+    'epochs_per_round': 1,
     'lr': 0.01,
     'momentum': 0.5,
-    'log_interval': 100,
+    'log_interval': 10,
 }
 
-num_clients = 30
-poisoned_clients = 10
+num_clients = 10
+poisoned_clients = 5
+federated_dataset_size = 0
 use_rofl = True
 
 # device
@@ -117,16 +118,13 @@ for round in range(1, args['rounds'] + 1):
     avg_model = {}
     if use_rofl:
         num_accepted_clients = 0
+        weights = []
         for i in range(len(model_updates)):
             n = norm_bound(model_updates[i])
             list_norm[i].append(n)
             print("Client {}: {}".format(i + 1, n))
-            if n < 10:
-                for name in model_updates[i].keys():
-                    if name in avg_model:
-                        avg_model[name] += model_updates[i][name].data
-                    else:
-                        avg_model[name] = model_updates[i][name].data
+            if n < 100:
+                weights.append(model_updates[i])
                 num_accepted_clients += 1
                 print("Client {} Norm bound satisfied".format(i + 1))
             else:
@@ -135,6 +133,9 @@ for round in range(1, args['rounds'] + 1):
         if num_accepted_clients == 0:
             print("No accepted clients, skipping round")
             avg_model = clients[num_clients - 1].model.state_dict()
+        else:
+            for name in weights[0].keys():
+                avg_model[name] = sum([param[name].data for param in weights]) / len(weights)
     else:
         for name in model_updates[0].keys():
             avg_model[name] = sum([param[name].data for param in model_updates]) / len(model_updates)
@@ -153,7 +154,19 @@ print("Total accuracy: ", acc)
 for client in clients:
     print("Client {} accuracy: {}".format(client.id, client.get_acc()))
 
-print("L2 Norm")
 if use_rofl:
+    print("L2 Norm")
     for i in range(len(clients)):
         print("Client {}: {}".format(i + 1, list_norm[i]))
+
+with open("../result.txt", "a") as f:
+    f.write("\n#c{} p{} r{} e{} lr{} m{}\n".format(num_clients, poisoned_clients, args['rounds'], args['epochs_per_round'], args['lr'], args['momentum']))
+    f.write("Total accuracy: {}\n".format(acc))
+    for client in clients:
+        f.write("Client {} accuracy: {}\n".format(client.id, client.get_acc()))
+    if use_rofl:
+        f.write("L2 Norm\n")
+        for i in range(len(clients)):
+            f.write("Client {}: {}\n".format(i + 1, list_norm[i]))
+        f.write("\n")
+    f.close()
